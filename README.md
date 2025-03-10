@@ -1,3 +1,4 @@
 # whois_lookup
 
-Testing integration.
+Install dependencies: 
+pip install streamlit python-whois ratelimit pandas

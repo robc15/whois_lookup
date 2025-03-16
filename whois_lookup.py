@@ -12,8 +12,13 @@ import time
 
 
 # Configure logging
+class ExcludeFilter(logging.Filter):
+    def filter(self, record):
+        return 'Trying WHOIS server' not in record.getMessage()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.addFilter(ExcludeFilter())
 
 # Rate limiting configuration
 CALLS_PER_MINUTE = 10  # Conservative rate limit
@@ -51,7 +56,7 @@ def safe_rdap_lookup(domain: str) -> dict:
                 'domain_status': None,
                 'nameservers': None,
                 'lookup_status': f'error: RDAP lookup failed with status {response.status_code}',
-                'lookup_method': 'RDAP'  # Add this line
+                'lookup_method': 'RDAP'
             }
 
         data = response.json()
@@ -105,7 +110,7 @@ def safe_rdap_lookup(domain: str) -> dict:
             'domain_status': domain_status,
             'nameservers': nameservers,
             'lookup_status': 'success',
-            'lookup_method': 'RDAP'  # Add this line
+            'lookup_method': 'RDAP'
         }
     except requests.Timeout:
         logger.error(f"Timeout error for {domain}")
@@ -117,7 +122,7 @@ def safe_rdap_lookup(domain: str) -> dict:
             'domain_status': None,
             'nameservers': None,
             'lookup_status': 'error: Connection timed out',
-            'lookup_method': 'RDAP'  # Add this line
+            'lookup_method': 'RDAP'
         }
     except Exception as e:
         logger.error(f"Error looking up {domain}: {str(e)}")
@@ -129,9 +134,8 @@ def safe_rdap_lookup(domain: str) -> dict:
             'domain_status': None,
             'nameservers': None,
             'lookup_status': f'error: {str(e)}',
-            'lookup_method': 'RDAP'  # Add this line
+            'lookup_method': 'RDAP'
         }
-
 
 
 @sleep_and_retry
@@ -154,7 +158,7 @@ def safe_whois_lookup(domain: str) -> dict:
                 'domain_status': None,
                 'nameservers': None,
                 'lookup_status': 'error: No data found',
-                'lookup_method': 'WHOIS'  # Add this line
+                'lookup_method': 'WHOIS'
             }
 
         # Clean dates
@@ -192,7 +196,7 @@ def safe_whois_lookup(domain: str) -> dict:
             'domain_status': domain_status,
             'nameservers': nameservers,
             'lookup_status': 'success',
-            'lookup_method': 'WHOIS'  # Add this line
+            'lookup_method': 'WHOIS'
         }
     except socket.timeout:
         logger.error(f"Timeout error for {domain}")
@@ -220,13 +224,16 @@ def safe_whois_lookup(domain: str) -> dict:
         socket.setdefaulttimeout(original_timeout)
 
 
-def process_domains(domains: List[str]) -> pd.DataFrame:
+def process_domains(domains: List[str], lookup_type: str) -> pd.DataFrame:
     """
     Process a list of domains with rate limiting
     """
     results = []
     for domain in domains:
-        result = safe_whois_lookup(domain)
+        if lookup_type == "WHOIS":
+            result = safe_whois_lookup(domain)
+        else:
+            result = safe_rdap_lookup(domain)
         results.append(result)
     return pd.DataFrame(results)
 
@@ -268,23 +275,27 @@ def is_valid_domain(domain: str) -> tuple[bool, str]:
     return True, domain
 
 
-def main():
-    global WHOIS_TIMEOUT
-    
-    # Make the layout wider
-    st.set_page_config(layout="wide")
-    
-    st.title("Bulk Domain Lookup Tool")
-    st.write("Enter domain names (one per line) to perform lookups")
-
-    # Initialize session state variables
+def initialize_session_state():
+    """Initialize session state variables"""
     if "processing" not in st.session_state:
         st.session_state["processing"] = False
     
     if "valid_domains" not in st.session_state:
         st.session_state["valid_domains"] = []
 
-    # Add configuration options
+    if "results" not in st.session_state:
+        st.session_state["results"] = []
+
+
+def configure_layout():
+    """Configure the layout of the Streamlit app"""
+    st.set_page_config(layout="wide")
+    st.title("Bulk Domain Lookup Tool")
+    st.write("Enter domain names (one per line) to perform lookups")
+
+
+def add_configuration_options():
+    """Add configuration options for the lookup tool"""
     col1, col2, col3 = st.columns(3)
     with col1:
         timeout = st.number_input(
@@ -308,36 +319,110 @@ def main():
             options=["WHOIS", "RDAP"],
             help="Choose between WHOIS or RDAP lookup"
         )
+    return timeout, rate_limit, lookup_type
 
-    # Text area for domain input
+
+def get_domains_from_input(domains_text, uploaded_file):
+    """Get domains from text input and uploaded CSV file"""
+    domains = [d.strip().lower() for d in domains_text.split('\n') if d.strip()]
+    
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+        if 'domain' in df.columns:
+            domains.extend(df['domain'].dropna().str.strip().str.lower().tolist())
+        else:
+            st.error("CSV file must contain a 'domain' column")
+            st.session_state.processing = False
+            return [], []
+    
+    valid_domains = []
+    invalid_domains = []
+    
+    for domain in domains:
+        is_valid, result = is_valid_domain(domain)
+        if is_valid:
+            valid_domains.append(result)
+        else:
+            invalid_domains.append(domain)
+    
+    return valid_domains, invalid_domains
+
+
+def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit):
+    """Process and display the domains"""
+    st.session_state.processing = True
+    st.session_state.results = []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    results_container = st.empty()
+    
+    total_domains = len(valid_domains)
+    
+    global WHOIS_TIMEOUT
+    WHOIS_TIMEOUT = timeout
+    
+    for idx, domain in enumerate(valid_domains, 1):
+        if not st.session_state.processing:
+            status_text.text("Operation cancelled!")
+            break
+        
+        remaining = total_domains - idx
+        status_text.text(f"Processing {domain}... ({idx}/{total_domains} completed, {remaining} remaining)")
+        
+        if lookup_type == "WHOIS":
+            result = safe_whois_lookup(domain)
+        else:
+            result = safe_rdap_lookup(domain)
+        
+        st.session_state.results.append(result)
+        
+        progress = idx / total_domains
+        progress_bar.progress(progress)
+        
+        df = pd.DataFrame(st.session_state.results)
+        column_order = ['domain', 'registrar', 'nameservers', 'creation_date', 'expiration_date', 'domain_status', 'lookup_status', 'lookup_method']
+        df = df.reindex(columns=column_order)
+        
+        results_container.dataframe(df)
+        
+        time.sleep(60 / rate_limit)
+    
+    if st.session_state.processing:
+        status_text.text("Processing complete!")
+    
+    st.session_state.processing = False
+    
+    if st.session_state.results:
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Download results as CSV",
+            data=csv,
+            file_name="domain_lookup_results.csv",
+            mime="text/csv"
+        )
+
+
+def main():
+    initialize_session_state()
+    configure_layout()
+    
+    timeout, rate_limit, lookup_type = add_configuration_options()
+    
     domains_text = st.text_area(
         "Enter domains (one per line)",
         placeholder="google.com\namazon.com\nmicrosoft.com\napple.com\nfacebook.com",
         height=200,
         help="Enter one domain name per line"
     )
-
-    # Process domains when submitted
+    
+    uploaded_file = st.file_uploader("Or upload a CSV file with domains", type=["csv"])
+    
     if st.button("Process Domains"):
-        # Reset the processing state
-        st.session_state.processing = True
+        valid_domains, invalid_domains = get_domains_from_input(domains_text, uploaded_file)
         
-        # Parse and validate domains
-        domains = [d.strip().lower() for d in domains_text.split('\n') if d.strip()]
-        valid_domains = []
-        invalid_domains = []
-        
-        for domain in domains:
-            is_valid, result = is_valid_domain(domain)
-            if is_valid:
-                valid_domains.append(result)
-            else:
-                invalid_domains.append(domain)
-        
-        # Store valid domains in session state
         st.session_state.valid_domains = valid_domains
         
-        # Show validation results
         if invalid_domains:
             st.error(f"Found {len(invalid_domains)} invalid domains: {', '.join(invalid_domains)}")
         
@@ -347,75 +432,25 @@ def main():
             return
         
         st.info(f"Found {len(valid_domains)} valid domains to process")
-
-    # Cancel button
+        process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
+    
     if st.session_state.processing:
         if st.button("Cancel"):
             st.session_state.processing = False
             st.warning("Cancelling operation...")
+    
+    if not st.session_state.processing and st.session_state.results:
+        df = pd.DataFrame(st.session_state.results)
+        column_order = ['domain', 'registrar', 'nameservers', 'creation_date', 'expiration_date', 'domain_status', 'lookup_status', 'lookup_method']
+        df = df.reindex(columns=column_order)
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Download partial results as CSV",
+            data=csv,
+            file_name="partial_domain_lookup_results.csv",
+            mime="text/csv"
+        )
 
-    # Process domains if we're in processing state and have valid domains
-    if st.session_state.processing and st.session_state.valid_domains:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        results_container = st.empty()
-        
-        total_domains = len(st.session_state.valid_domains)
-        results = []
-        
-        # Update timeout
-        WHOIS_TIMEOUT = timeout
-        
-        for idx, domain in enumerate(st.session_state.valid_domains, 1):
-            # Check if cancel was pressed
-            if not st.session_state.processing:
-                status_text.text("Operation cancelled!")
-                break
-                
-            remaining = total_domains - idx
-            status_text.text(f"Processing {domain}... ({idx}/{total_domains} completed, {remaining} remaining)")
-            
-            # Use the selected lookup method
-            if lookup_type == "WHOIS":
-                result = safe_whois_lookup(domain)
-            else:
-                result = safe_rdap_lookup(domain)
-                
-            results.append(result)
-            
-            # Update progress
-            progress = idx / total_domains
-            progress_bar.progress(progress)
-            
-            # Create DataFrame and display results so far
-            df = pd.DataFrame(results)
-            
-            # Reorder columns for better display
-            column_order = ['domain', 'registrar', 'nameservers', 'creation_date', 'expiration_date', 'domain_status', 'lookup_status', 'lookup_method']
-            df = df.reindex(columns=column_order)
-            
-            # Display results
-            results_container.dataframe(df)
-            
-            # Rate limiting
-            time.sleep(60/rate_limit)
-        
-        # Final status update
-        if st.session_state.processing:
-            status_text.text("Processing complete!")
-        
-        # Reset processing state
-        st.session_state.processing = False
-        
-        # Add download button for CSV
-        if results:
-            csv = df.to_csv(index=False)
-            st.download_button(
-                label="Download results as CSV",
-                data=csv,
-                file_name="domain_lookup_results.csv",
-                mime="text/csv"
-            )
 
 if __name__ == "__main__":
     main()

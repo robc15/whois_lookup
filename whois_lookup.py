@@ -328,8 +328,9 @@ def main():
         invalid_domains = []
         
         for domain in domains:
-            if is_valid_domain(domain):
-                valid_domains.append(domain)
+            is_valid, result = is_valid_domain(domain)
+            if is_valid:
+                valid_domains.append(result)
             else:
                 invalid_domains.append(domain)
         
@@ -418,4 +419,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

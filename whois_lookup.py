@@ -368,6 +368,7 @@ def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
 
     if st.button("Cancel"):
         st.session_state.processing = False
+        st.session_state.all_lookups_successful = False # Add this line
         st.warning("Cancelling operation...")
 
     for idx, domain in enumerate(valid_domains, 1):

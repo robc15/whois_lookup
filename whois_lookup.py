@@ -371,7 +371,7 @@ def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
     if cancel_button:
         st.session_state.processing = False
         st.warning("Operation cancelled. Results preserved.")
-        st.rerun()
+        return
 
     for idx, domain in enumerate(valid_domains, 1):
         if not st.session_state.processing:
@@ -423,7 +423,8 @@ def main():
         "Enter domains (one per line)",
         placeholder="google.com\namazon.com\nmicrosoft.com\napple.com\nfacebook.com",
         height=200,
-        help="Enter one domain name per line"
+        help="Enter one domain name per line",
+        key="domains_text"
     )
 
     uploaded_file = st.file_uploader("Or upload a CSV file with domains", type=["csv"])
@@ -439,6 +440,9 @@ def main():
         st.session_state.valid_domains = []
         st.session_state.processing = False
         st.session_state.all_lookups_successful = False
+        # Clear the text area by using a key and session state
+        if 'domains_text' in st.session_state:
+            del st.session_state['domains_text']
         st.success("Session reset. Ready for new lookup.")
         st.rerun()
 

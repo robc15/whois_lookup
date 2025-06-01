@@ -511,13 +511,13 @@ def main():
         with controls_col:
             def cancel_processing_callback():
                 st.session_state.user_requested_cancel = True
-                st.session_state.processing_active = False # Turn off processing mode
+                st.session_state.processing_active = False  # Turn off processing mode
                 st.warning("Cancellation initiated. Processing will stop shortly.")
                 # Streamlit will rerun after this callback due to state change
 
-            st.button("Cancel Processing", # No need for if, button itself is conditional
+            st.button("Cancel Processing",
                       key="main_cancel_button_in_control",
-                      type="destructive",
+                      type="secondary",  # Changed from "destructive" to "secondary"
                       use_container_width=True,
                       on_click=cancel_processing_callback)
 

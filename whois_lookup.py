@@ -366,28 +366,31 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
     return valid_domains, invalid_domain_entries
 
 
+# whois_lookup.py
 def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate_limit_config):
     """Process and display the domains, now with an internal cancel button."""
     _current_run_completed_fully = True
 
     progress_bar = st.progress(0, text="Initializing lookup...")
     status_text = st.empty()
-    cancel_button_placeholder = st.empty() # Placeholder for the cancel button
+    cancel_button_placeholder = st.empty()
 
-    # Show cancel button only if processing is active and not yet cancelled
+    # NEW: Create an empty placeholder for the DataFrame
+    live_results_table_placeholder = st.empty()
+
     if not st.session_state.get("user_requested_cancel", False):
         def cancel_button_callback():
             st.session_state.user_requested_cancel = True
-            cancel_button_placeholder.empty() # Remove button immediately
+            cancel_button_placeholder.empty()
             st.toast("Cancellation signal sent. Finishing current step or stopping...")
 
         cancel_button_placeholder.button("Cancel Processing",
                                          key="cancel_in_progress_button",
-                                         type="secondary", # Or "primary" if you want it more prominent
+                                         type="secondary",
                                          on_click=cancel_button_callback,
-                                         use_container_width=True) # Make it wide like the progress bar
+                                         use_container_width=True)
 
-    results_container = st.container()  # For live-updated table
+    # results_container = st.container() # REMOVE or repurpose if needed for other static content
     total_domains = len(valid_domains)
     global WHOIS_TIMEOUT
     WHOIS_TIMEOUT = timeout_config
@@ -399,8 +402,8 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
             status_text.warning(
                 "Operation cancelled by user. Processing stopped."
             )
-            cancel_button_placeholder.empty() # Ensure button is gone
-            break  # Exit the loop
+            cancel_button_placeholder.empty()
+            break
 
         progress_val = idx / total_domains
         progress_text = f"Processing: {domain} ({idx}/{total_domains})"
@@ -418,20 +421,26 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
 
         st.session_state.results.append(result)
 
+        # Update the DataFrame in the st.empty() placeholder
         if st.session_state.results:
             df_live = pd.DataFrame(st.session_state.results)
             df_live = df_live.reindex(columns=OUTPUT_COLUMN_ORDER)
-            results_container.dataframe(df_live)
+            # Use the placeholder to display/update the DataFrame
+            live_results_table_placeholder.dataframe(df_live)
 
         if idx < total_domains and not st.session_state.get("user_requested_cancel", False):
             time.sleep(60 / rate_limit_config)
     # --- End of processing loop ---
 
-    cancel_button_placeholder.empty() # Clean up placeholder after loop regardless
+    cancel_button_placeholder.empty()
+
+    # The final DataFrame display is handled by main() after processing_active becomes False.
+    # So, we don't need to explicitly display it here post-loop unless we want a different presentation.
+    # The live_results_table_placeholder will hold the last state from the loop.
 
     if _current_run_completed_fully:
         if total_domains > 0:
-            processed_count = len(st.session_state.results) # Use actual results count
+            processed_count = len(st.session_state.results)
             status_text.success(
                 f"Processing complete! Looked up {processed_count} domain(s)."
             )
@@ -450,7 +459,6 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
             progress_bar.empty()
             st.session_state.all_lookups_successful = True
     # If cancelled, warning is already shown inside the loop.
-
     # The main st.session_state.processing_active is handled by main()
 
 

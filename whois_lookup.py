@@ -370,8 +370,7 @@ def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
     cancel_button = st.button("Cancel")
     if cancel_button:
         st.session_state.processing = False
-        st.session_state.all_lookups_successful = False
-        st.warning("Cancelling operation...")
+        st.warning("Operation cancelled. Results preserved.")
         st.rerun()
 
     for idx, domain in enumerate(valid_domains, 1):
@@ -429,7 +428,21 @@ def main():
 
     uploaded_file = st.file_uploader("Or upload a CSV file with domains", type=["csv"])
 
-    if st.button("Process Domains"):
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        process_button = st.button("Process Domains")
+    with col2:
+        reset_button = st.button("Reset")
+
+    if reset_button:
+        st.session_state.results = []
+        st.session_state.valid_domains = []
+        st.session_state.processing = False
+        st.session_state.all_lookups_successful = False
+        st.success("Session reset. Ready for new lookup.")
+        st.rerun()
+
+    if process_button:
         valid_domains, invalid_domains = get_domains_from_input(domains_text, uploaded_file)
 
         st.session_state.valid_domains = valid_domains

@@ -492,12 +492,12 @@ def main():
     # input_col is where most inputs go.
     # controls_col was previously for the cancel button, but it's moved.
     # You can repurpose or remove controls_col if no longer needed, or use it for other controls.
-    input_col, _ = st.columns([3, 1]) # controls_col might be unused now
+    input_col, _ = st.columns([3, 1])  # controls_col might be unused now
 
     with input_col:
         st.text_area(
             "Enter domains (one per line):",
-            key="domains_text", # Linked to st.session_state.domains_text
+            key="domains_text",  # Linked to st.session_state.domains_text
             placeholder="google.com\nexample.net\n",
             height=200,
             help="Enter one domain name per line."
@@ -531,17 +531,17 @@ def main():
                          type="primary",
                          use_container_width=True):
                 st.session_state.results = []  # Clear previous results
-                st.session_state.valid_domains = [] # Clear previous valid domains
+                st.session_state.valid_domains = []  # Clear previous valid domains
                 st.session_state.all_lookups_successful = False  # Reset flag
-                st.session_state.user_requested_cancel = False # Reset cancel flag
-                st.session_state.processing_active = True # Start processing mode
-                st.session_state.process_button_clicked = True # Track that this button was clicked
-                st.rerun() # Rerun to show cancel button (if any outside) and then start processing
+                st.session_state.user_requested_cancel = False  # Reset cancel flag
+                st.session_state.processing_active = True  # Start processing mode
+                st.session_state.process_button_clicked = True  # Track that this button was clicked
+                st.rerun()  # Rerun to show cancel button (if any outside) and then start processing
 
         with b_col2:
             if st.button("Reset Session",
                          use_container_width=True,
-                         on_click=reset_session_state_callback): # Callback handles key change
+                         on_click=reset_session_state_callback):  # Callback handles key change
                 st.success("Inputs and results cleared. Ready for new lookup. 👍")
                 # Rerun to apply the new key to the uploader and clear other inputs
                 st.rerun()
@@ -566,7 +566,6 @@ def main():
         else:
             logger.info("Main: No uploaded CSV file found in session state for processing.")
 
-
         valid_domains, invalid_domains_info = get_domains_from_input(
             current_domains_text, file_to_process_from_session
         )
@@ -584,16 +583,16 @@ def main():
         # If cancellation happened *before* process_and_display_domains is called
         # (e.g., user clicks "Process" then "Cancel" very quickly before the loop starts)
         if st.session_state.get("user_requested_cancel", False):
-            st.session_state.processing_active = False # Ensure it's off
+            st.session_state.processing_active = False  # Ensure it's off
             st.warning("Operation cancelled by user before processing started.")
-            st.rerun() # Rerun to update UI
+            st.rerun()  # Rerun to update UI
         elif not valid_domains:
-            if st.session_state.get("process_button_clicked"): # Only show error if process was actually attempted
+            if st.session_state.get("process_button_clicked"):  # Only show error if process was actually attempted
                 st.error("No valid domains found to process!")
             st.session_state.processing_active = False
-            st.session_state.process_button_clicked = False # Reset, as no processing happened
+            st.session_state.process_button_clicked = False  # Reset, as no processing happened
             st.rerun()
-        else: # We have valid domains and we were not cancelled before starting this block
+        else:  # We have valid domains and we were not cancelled before starting this block
             info_msg = (
                 f"Found {len(valid_domains)} valid domains. "
                 f"Starting lookup ({lookup_type})..."
@@ -608,8 +607,8 @@ def main():
             # After process_and_display_domains completes (fully or by its own cancellation),
             # set processing_active to False.
             st.session_state.processing_active = False
-            st.session_state.process_button_clicked = False # Reset after processing attempt
-            st.rerun() # Rerun to update UI (e.g., remove progress bar, cancel button from view)
+            st.session_state.process_button_clicked = False  # Reset after processing attempt
+            st.rerun()  # Rerun to update UI (e.g., remove progress bar, cancel button from view)
 
     # --- Display Results and Download Button ---
     # This section is shown if there are results, regardless of processing_active.
@@ -618,14 +617,14 @@ def main():
         st.subheader("📊 Lookup Results")
 
         df_results = pd.DataFrame(st.session_state.results)
-        df_results = df_results.reindex(columns=OUTPUT_COLUMN_ORDER) # Ensures all columns, fills missing with NA
+        df_results = df_results.reindex(columns=OUTPUT_COLUMN_ORDER)  # Ensures all columns, fills missing with NA
         st.dataframe(df_results, use_container_width=True)
 
         csv_data = df_results.to_csv(index=False).encode('utf-8')
 
         all_lookups_successful_flag = st.session_state.get('all_lookups_successful', False)
         is_full_success_scenario = (
-            st.session_state.valid_domains and # Check if there were valid domains to begin with
+            st.session_state.valid_domains and  # Check if there were valid domains to begin with
             len(st.session_state.results) == len(st.session_state.valid_domains) and
             all_lookups_successful_flag
         )

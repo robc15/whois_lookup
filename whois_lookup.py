@@ -445,6 +445,20 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
     st.session_state.processing = False  # Mark processing as finished
 
 
+def reset_session_state_callback():
+    """Callback to reset relevant session state variables."""
+    st.session_state.results = []
+    st.session_state.valid_domains = []
+    st.session_state.processing = False
+    st.session_state.all_lookups_successful = False
+    st.session_state.domains_text = ""  # Clear text area content
+    st.session_state.process_button_clicked = False
+    if "cancel_processing" in st.session_state:
+        st.session_state.cancel_processing = False
+    # The success message will be shown after the button, before the auto-rerun
+    # st.success("Inputs and results cleared. Ready for new lookup. 👍") # Moved
+
+
 def main():
     initialize_session_state()
     configure_layout()
@@ -484,19 +498,14 @@ def main():
         # Two blank lines are not strictly necessary here by PEP 8 (it's about
         # logical blocks), but can improve readability.
         with b_col2:
-            if st.button("Reset Session", use_container_width=True):
-                st.session_state.results = []
-                st.session_state.valid_domains = []
-                st.session_state.processing = False
-                st.session_state.all_lookups_successful = False
-                st.session_state.domains_text = ""  # Clear text area content
-                st.session_state.process_button_clicked = False  # Reset processing trigger
-                if "cancel_processing" in st.session_state:
-                    st.session_state.cancel_processing = False
+            if st.button("Reset Session",
+                         use_container_width=True,
+                         on_click=reset_session_state_callback):
+                # This message will appear, then Streamlit reruns due to on_click.
                 st.success(
                     "Inputs and results cleared. Ready for new lookup. 👍"
                 )
-                st.rerun()  # Rerun to reflect cleared state
+                # No explicit st.rerun() needed here; on_click handles it.
 
     # controls_col can be used for other controls.
     # E.g., "Cancel" button when processing is active.

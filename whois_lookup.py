@@ -279,6 +279,8 @@ def initialize_session_state():
     # MODIFIED: Initialize domains_text for the text_area
     if "domains_text" not in st.session_state:
         st.session_state.domains_text = ""
+    if "process_button_clicked" not in st.session_state:
+        st.session_state.process_button_clicked = False
 
 
 def configure_layout():

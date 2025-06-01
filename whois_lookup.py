@@ -268,7 +268,7 @@ def is_valid_domain(domain: str) -> tuple[bool, str]:
 
 def initialize_session_state():
     """Initialize session state variables"""
-    if "processing_active" not in st.session_state: # Renamed
+    if "processing_active" not in st.session_state:
         st.session_state.processing_active = False
     if "valid_domains" not in st.session_state:
         st.session_state["valid_domains"] = []
@@ -278,11 +278,16 @@ def initialize_session_state():
         st.session_state["results"] = []
     if "all_lookups_successful" not in st.session_state:
         st.session_state.all_lookups_successful = False
-    # MODIFIED: Initialize domains_text for the text_area
     if "domains_text" not in st.session_state:
         st.session_state.domains_text = ""
     if "process_button_clicked" not in st.session_state:
         st.session_state.process_button_clicked = False
+    # Add a key for the uploader that we can change
+    if "uploader_key_counter" not in st.session_state:
+        st.session_state.uploader_key_counter = 0
+    # uploaded_csv_file will store the actual UploadedFile object
+    # if "uploaded_csv_file" not in st.session_state:
+    #     st.session_state.uploaded_csv_file = None # Not strictly needed to init here
 
 
 def configure_layout():
@@ -455,16 +460,19 @@ def reset_session_state_callback():
     st.session_state.valid_domains = []
     st.session_state.processing_active = False
     st.session_state.all_lookups_successful = False
-    st.session_state.domains_text = ""  # Clear text area content
+    st.session_state.domains_text = ""
     st.session_state.process_button_clicked = False
     st.session_state.user_requested_cancel = False
+
     if "uploaded_csv_file" in st.session_state:
         del st.session_state.uploaded_csv_file
-    # Attempt to clear the file uploader widget itself by resetting its state value
-    if "csv_uploader" in st.session_state:
-        st.session_state.csv_uploader = None
-    # The success message will be shown after the button, before the auto-rerun
-    # st.success("Inputs and results cleared. Ready for new lookup. 👍") # Moved
+
+    # Increment the counter to change the file uploader's key on the next rerun
+    st.session_state.uploader_key_counter += 1
+
+    # DO NOT DO THIS: (This was the line causing the error)
+    # if "csv_uploader" in st.session_state:
+    # st.session_state.csv_uploader = None
 
 
 def main():
@@ -473,78 +481,82 @@ def main():
 
     timeout, rate_limit, lookup_type = add_configuration_options()
 
-    input_col, controls_col = st.columns([3, 1]) # controls_col is now unused for cancel button
+    # input_col is where most inputs go.
+    # controls_col was previously for the cancel button, but it's moved.
+    # You can repurpose or remove controls_col if no longer needed, or use it for other controls.
+    input_col, _ = st.columns([3, 1]) # controls_col might be unused now
 
     with input_col:
         st.text_area(
             "Enter domains (one per line):",
-            key="domains_text",
+            key="domains_text", # Linked to st.session_state.domains_text
             placeholder="google.com\nexample.net\n",
             height=200,
             help="Enter one domain name per line."
         )
 
-        # Use a key for the file_uploader and manage its state
+        # Use a dynamic key for the file_uploader based on uploader_key_counter
+        # This allows the reset button to effectively "clear" the uploader by changing its key.
+        uploader_key_string = f"csv_uploader_{st.session_state.uploader_key_counter}"
         uploaded_file_widget_value = st.file_uploader(
             "Or upload a CSV file with domains:",
             type=["csv"],
             help="CSV file should have a column named 'domain'.",
-            key="csv_uploader" # Added key
+            key=uploader_key_string  # Dynamic key
         )
 
-        # Manage uploaded file in session state
+        # Manage the actual uploaded file object in a separate session state variable
         if uploaded_file_widget_value is not None:
+            # If a file is newly uploaded or present in the widget, store it.
             st.session_state.uploaded_csv_file = uploaded_file_widget_value
         else:
-            # If the uploader is cleared by the user, remove our session state copy
-            if "uploaded_csv_file" in st.session_state and st.session_state.get("csv_uploader") is None:
+            # If the widget is empty (e.g., after key change or user clears it),
+            # ensure our stored version is also removed.
+            if "uploaded_csv_file" in st.session_state:
                 del st.session_state.uploaded_csv_file
 
+        # --- Buttons ---
         b_col1, b_col2 = st.columns(2)
+
         with b_col1:
             if st.button("Process Domains",
                          type="primary",
                          use_container_width=True):
-                st.session_state.results = []
-                st.session_state.valid_domains = []
-                st.session_state.all_lookups_successful = False
+                st.session_state.results = []  # Clear previous results
+                st.session_state.valid_domains = [] # Clear previous valid domains
+                st.session_state.all_lookups_successful = False  # Reset flag
                 st.session_state.user_requested_cancel = False # Reset cancel flag
-                st.session_state.processing_active = True
-                # st.session_state.process_button_clicked = True # If you use this flag elsewhere
-                st.rerun()
+                st.session_state.processing_active = True # Start processing mode
+                st.session_state.process_button_clicked = True # Track that this button was clicked
+                st.rerun() # Rerun to show cancel button (if any outside) and then start processing
 
         with b_col2:
             if st.button("Reset Session",
                          use_container_width=True,
-                         on_click=reset_session_state_callback):
+                         on_click=reset_session_state_callback): # Callback handles key change
                 st.success("Inputs and results cleared. Ready for new lookup. 👍")
-                st.rerun() # Explicit rerun after reset to clear uploader if callback did its job
-
-    # REMOVE old cancel button logic from here (was in controls_col)
+                # Rerun to apply the new key to the uploader and clear other inputs
+                st.rerun()
 
     # --- Domain Processing Logic ---
-    # If user requested cancel, ensure processing_active is False and UI updates.
+
+    # If user requested cancel while processing was supposed to be active, ensure it's turned off.
     if st.session_state.get("user_requested_cancel", False) and \
-       st.session_state.get("processing_active", False): # Check if it was active
+       st.session_state.get("processing_active", False):
         st.session_state.processing_active = False
-        # No immediate rerun here, let the script flow to show final state or messages.
-        # The warning/toast from cancel callback and process_and_display_domains will show.
-        # A rerun will happen naturally or at the end of this processing block logic.
+        # A warning/toast about cancellation is handled within process_and_display_domains or its callback
 
+    # This block runs if processing_active is true.
+    # process_and_display_domains will itself check user_requested_cancel internally.
     if st.session_state.get("processing_active", False):
-        # At this point, user_requested_cancel could be True if cancel was clicked
-        # and the script reran into this block before processing_active was set to False above.
-        # The process_and_display_domains function itself will handle the user_requested_cancel.
-
         current_domains_text = st.session_state.domains_text
-        # Use the file from session_state
+        # Use the file from session_state (which reflects the uploader's state)
         file_to_process_from_session = st.session_state.get("uploaded_csv_file", None)
 
-        # For debugging CSV issues:
         if file_to_process_from_session is not None:
-            logger.info(f"Attempting to process with uploaded file: {file_to_process_from_session.name}")
-        elif st.session_state.get("csv_uploader") is not None: # Check if widget has a file but session state doesn't
-             logger.warning("CSV Uploader has a file, but it's not in st.session_state.uploaded_csv_file. Check logic.")
+            logger.info(f"Main: Attempting to process with uploaded file: {file_to_process_from_session.name}")
+        else:
+            logger.info("Main: No uploaded CSV file found in session state for processing.")
 
 
         valid_domains, invalid_domains_info = get_domains_from_input(
@@ -553,51 +565,69 @@ def main():
         st.session_state.valid_domains = valid_domains
 
         if invalid_domains_info:
-            warning_msg = (f"Found {len(invalid_domains_info)} invalid or unsupported domain entries (will be skipped):")
+            warning_msg = (
+                f"Found {len(invalid_domains_info)} invalid or "
+                f"unsupported domain entries (will be skipped):"
+            )
             st.warning(warning_msg)
             for info in invalid_domains_info:
                 st.caption(f" - {info}")
 
-        # If cancellation happened before processing could even start with valid_domains
+        # If cancellation happened *before* process_and_display_domains is called
+        # (e.g., user clicks "Process" then "Cancel" very quickly before the loop starts)
         if st.session_state.get("user_requested_cancel", False):
             st.session_state.processing_active = False # Ensure it's off
-            # Message already handled by cancel callback or process_and_display_domains
-            st.rerun() # Rerun to reflect stopped state
+            st.warning("Operation cancelled by user before processing started.")
+            st.rerun() # Rerun to update UI
         elif not valid_domains:
-            st.error("No valid domains found to process!")
+            if st.session_state.get("process_button_clicked"): # Only show error if process was actually attempted
+                st.error("No valid domains found to process!")
             st.session_state.processing_active = False
+            st.session_state.process_button_clicked = False # Reset, as no processing happened
             st.rerun()
         else: # We have valid domains and we were not cancelled before starting this block
-            info_msg = (f"Found {len(valid_domains)} valid domains. Starting lookup ({lookup_type})...")
+            info_msg = (
+                f"Found {len(valid_domains)} valid domains. "
+                f"Starting lookup ({lookup_type})..."
+            )
             st.info(info_msg)
 
+            # Call the processing function. It will display its own cancel button
+            # and check st.session_state.user_requested_cancel.
             process_and_display_domains(
                 valid_domains, lookup_type, timeout, rate_limit
             )
             # After process_and_display_domains completes (fully or by its own cancellation),
             # set processing_active to False.
             st.session_state.processing_active = False
-            st.rerun() # Rerun to update UI (e.g., remove progress bar, cancel button)
+            st.session_state.process_button_clicked = False # Reset after processing attempt
+            st.rerun() # Rerun to update UI (e.g., remove progress bar, cancel button from view)
 
     # --- Display Results and Download Button ---
-    # (This part remains largely the same)
+    # This section is shown if there are results, regardless of processing_active.
     if st.session_state.results and len(st.session_state.results) > 0:
         st.markdown("---")
         st.subheader("📊 Lookup Results")
 
         df_results = pd.DataFrame(st.session_state.results)
-        df_results = df_results.reindex(columns=OUTPUT_COLUMN_ORDER)
+        df_results = df_results.reindex(columns=OUTPUT_COLUMN_ORDER) # Ensures all columns, fills missing with NA
         st.dataframe(df_results, use_container_width=True)
 
         csv_data = df_results.to_csv(index=False).encode('utf-8')
+
         all_lookups_successful_flag = st.session_state.get('all_lookups_successful', False)
         is_full_success_scenario = (
-            st.session_state.valid_domains and
+            st.session_state.valid_domains and # Check if there were valid domains to begin with
             len(st.session_state.results) == len(st.session_state.valid_domains) and
             all_lookups_successful_flag
         )
-        download_label = "Download Full Results as CSV" if is_full_success_scenario else "Download Partial/Current Results as CSV"
-        download_filename = "domain_lookup_results_full.csv" if is_full_success_scenario else "domain_lookup_results_partial.csv"
+
+        if is_full_success_scenario:
+            download_label = "Download Full Results as CSV"
+            download_filename = "domain_lookup_results_full.csv"
+        else:
+            download_label = "Download Partial/Current Results as CSV"
+            download_filename = "domain_lookup_results_partial.csv"
 
         st.download_button(
             label=f"📥 {download_label}",
@@ -605,11 +635,18 @@ def main():
             file_name=download_filename,
             mime="text/csv",
         )
+    # Handle the case where "Process Domains" was clicked, no processing is active,
+    # no results, and not cancelled (e.g., no valid domains were found initially).
     elif st.session_state.get("process_button_clicked") and \
             not st.session_state.get("processing_active", False) and \
             not st.session_state.results and \
-            not st.session_state.get("user_requested_cancel", False): # Added check for cancel
-        st.info("No results to display. Ensure valid domains were processed or process was not cancelled.")
+            not st.session_state.get("user_requested_cancel", False):
+        # This state can be reached if no valid domains were found and processing_active was set to false.
+        # The specific error for "No valid domains" is shown above.
+        # This provides a general "no results" if other conditions met.
+        # st.info("No results to display. Ensure valid domains were provided and processed.")
+        # This specific message might be redundant given other messages.
+        pass
 
 
 if __name__ == "__main__":

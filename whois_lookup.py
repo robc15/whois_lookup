@@ -268,10 +268,12 @@ def is_valid_domain(domain: str) -> tuple[bool, str]:
 
 def initialize_session_state():
     """Initialize session state variables"""
-    if "processing" not in st.session_state:
-        st.session_state["processing"] = False
+    if "processing_active" not in st.session_state: # Renamed
+        st.session_state.processing_active = False
     if "valid_domains" not in st.session_state:
         st.session_state["valid_domains"] = []
+    if "user_requested_cancel" not in st.session_state:
+        st.session_state.user_requested_cancel = False
     if "results" not in st.session_state:
         st.session_state["results"] = []
     if "all_lookups_successful" not in st.session_state:
@@ -360,9 +362,8 @@ def get_domains_from_input(domains_text: str, uploaded_file) -> tuple[List[str],
 
 def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate_limit_config):
     """Process and display the domains"""
-    st.session_state.processing = True
-    # Assume not all successful until proven
-    st.session_state.all_lookups_successful = False
+    # This function's own sense of whether it completed fully or was cancelled.
+    _current_run_completed_fully = True
 
     progress_bar = st.progress(0, text="Initializing lookup...")
     status_text = st.empty()
@@ -373,20 +374,16 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
     global WHOIS_TIMEOUT  # Declare global to modify it
     WHOIS_TIMEOUT = timeout_config
 
-    # The button's existence will trigger a rerun. We check its state after the rerun.
-    # No separate st.session_state key for the button if handled this way.
-
     # --- Main processing loop ---
     for idx, domain in enumerate(valid_domains, 1):
         # Check for cancellation at the start of each iteration
-        # 'cancel_processing' key could be set by a button outside this func
-        if st.session_state.get("cancel_processing", False):
-            st.session_state.processing = False  # Ensure flag is set
+        if st.session_state.get("user_requested_cancel", False):
+            _current_run_completed_fully = False
             status_text.warning(
                 "Operation cancelled by user. Partial results are available."
             )
             st.session_state.all_lookups_successful = False
-            st.session_state.cancel_processing = False  # Reset cancel flag
+            # user_requested_cancel is reset by the "Process Domains" button
             break  # Exit the loop
 
         progress_val = idx / total_domains
@@ -417,8 +414,8 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
     # --- End of processing loop ---
 
     # Post-processing status
-    if st.session_state.processing:  # If not cancelled
-        if total_domains > 0:
+    if _current_run_completed_fully:
+        if total_domains > 0: # If there were domains to process
             processed_count = len(st.session_state.results)
             status_text.success(
                 f"Processing complete! Looked up {processed_count} domain(s)."
@@ -439,22 +436,22 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
             progress_bar.empty()  # Clear progress bar
             # Or False, debatable for "no domains"
             st.session_state.all_lookups_successful = True
+    # If cancelled, the warning message is already shown inside the loop.
 
-    # If loop broke due to cancellation, message already shown.
-    # If it completed, processing flag remains true until here.
-    st.session_state.processing = False  # Mark processing as finished
+    # The main st.session_state.processing_active is handled by main()
 
 
 def reset_session_state_callback():
     """Callback to reset relevant session state variables."""
     st.session_state.results = []
     st.session_state.valid_domains = []
-    st.session_state.processing = False
+    st.session_state.processing_active = False
     st.session_state.all_lookups_successful = False
     st.session_state.domains_text = ""  # Clear text area content
     st.session_state.process_button_clicked = False
-    if "cancel_processing" in st.session_state:
-        st.session_state.cancel_processing = False
+    st.session_state.user_requested_cancel = False
+    # if "cancel_processing" in st.session_state: # Old flag
+    #     st.session_state.cancel_processing = False
     # The success message will be shown after the button, before the auto-rerun
     # st.success("Inputs and results cleared. Ready for new lookup. 👍") # Moved
 
@@ -490,12 +487,13 @@ def main():
             if st.button("Process Domains",
                          type="primary",
                          use_container_width=True):
-                st.session_state.process_button_clicked = True
                 st.session_state.results = []  # Clear previous results
+                st.session_state.valid_domains = [] # Clear previous valid domains
                 st.session_state.all_lookups_successful = False  # Reset flag
-                # No st.rerun(), allow script to flow to processing logic
+                st.session_state.user_requested_cancel = False # Reset cancel flag
+                st.session_state.processing_active = True # Start processing mode
+                st.rerun() # Rerun to show cancel button and then start processing
 
-        # Two blank lines are not strictly necessary here by PEP 8 (it's about
         # logical blocks), but can improve readability.
         with b_col2:
             if st.button("Reset Session",
@@ -506,13 +504,28 @@ def main():
                     "Inputs and results cleared. Ready for new lookup. 👍"
                 )
                 # No explicit st.rerun() needed here; on_click handles it.
+                # Streamlit reruns automatically after on_click that modifies state.
 
-    # controls_col can be used for other controls.
-    # E.g., "Cancel" button when processing is active.
+    # Display Cancel button in controls_col if processing is active
+    if st.session_state.get("processing_active", False):
+        with controls_col:
+            def cancel_processing_callback():
+                st.session_state.user_requested_cancel = True
+                st.session_state.processing_active = False # Turn off processing mode
+                st.warning("Cancellation initiated. Processing will stop shortly.")
+                # Streamlit will rerun after this callback due to state change
+
+            st.button("Cancel Processing", # No need for if, button itself is conditional
+                      key="main_cancel_button_in_control",
+                      type="destructive",
+                      use_container_width=True,
+                      on_click=cancel_processing_callback)
 
     # --- Domain Processing Logic ---
-    if (st.session_state.process_button_clicked and
-            not st.session_state.processing):
+    # This block runs if processing_active is true and user hasn't cancelled
+    if st.session_state.get("processing_active", False) and \
+       not st.session_state.get("user_requested_cancel", False):
+
         # Text read from st.session_state.domains_text (bound to text_area)
         current_domains_text = st.session_state.domains_text
         valid_domains, invalid_domains_info = get_domains_from_input(
@@ -531,7 +544,8 @@ def main():
 
         if not valid_domains:
             st.error("No valid domains found to process!")
-            st.session_state.process_button_clicked = False
+            st.session_state.processing_active = False # Stop processing mode
+            st.rerun() # Rerun to update UI (e.g. hide cancel button)
         else:
             info_msg = (
                 f"Found {len(valid_domains)} valid domains. "
@@ -539,27 +553,14 @@ def main():
             )
             st.info(info_msg)
 
-            if not st.session_state.get("cancel_processing", False):
-                process_and_display_domains(
-                    valid_domains, lookup_type, timeout, rate_limit
-                )
-
-            # Reset process_button_clicked state whether processing completed or was cancelled
-            st.session_state.process_button_clicked = False
-
-    # Display Cancel button in controls_col if processing is active
-    if st.session_state.processing:
-        with controls_col:
-            if st.button("Cancel Processing",
-                         key="main_cancel_button_in_control",
-                         type="destructive",
-                         use_container_width=True):
-                st.session_state.cancel_processing = True
-                # Prevent re-trigger if cancelled early
-                st.session_state.process_button_clicked = False
-                st.warning(
-                    "Cancellation initiated. Processing will stop shortly.")
-                st.rerun()  # Rerun to reflect cancellation state
+            # Call the processing function. It will check st.session_state.user_requested_cancel
+            process_and_display_domains(
+                valid_domains, lookup_type, timeout, rate_limit
+            )
+            # After process_and_display_domains completes (fully or by cancellation),
+            # ensure processing_active is False and rerun to update UI.
+            st.session_state.processing_active = False
+            st.rerun()
 
     # --- Display Results and Download Button ---
     if st.session_state.results and len(st.session_state.results) > 0:
@@ -597,7 +598,7 @@ def main():
             mime="text/csv",
         )
     elif st.session_state.get("process_button_clicked") and \
-            not st.session_state.processing and \
+            not st.session_state.get("processing_active", False) and \
             not st.session_state.results:
         # This case might occur if process_button_clicked was true,
         # but no valid domains were found, and then it was reset.

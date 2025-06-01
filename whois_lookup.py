@@ -284,6 +284,7 @@ def initialize_session_state():
     if "valid_domains" not in st.session_state:
         st.session_state["valid_domains"] = []
 
+    # Ensure results list is initialized if not present
     if "results" not in st.session_state:
         st.session_state["results"] = []
 
@@ -354,8 +355,8 @@ def get_domains_from_input(domains_text, uploaded_file):
 
 def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit):
     """Process and display the domains"""
+    st.session_state.results = []  # Clear previous results
     st.session_state.processing = True
-    st.session_state.results = []
 
     progress_bar = st.progress(0)
     status_text = st.empty()

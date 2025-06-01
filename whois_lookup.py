@@ -366,6 +366,10 @@ def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
     global WHOIS_TIMEOUT
     WHOIS_TIMEOUT = timeout
 
+    if st.button("Cancel"):
+        st.session_state.processing = False
+        st.warning("Cancelling operation...")
+
     for idx, domain in enumerate(valid_domains, 1):
         if not st.session_state.processing:
             status_text.text("Operation cancelled!")
@@ -436,11 +440,6 @@ def main():
 
         st.info(f"Found {len(valid_domains)} valid domains to process")
         process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
-
-    if st.session_state.processing:
-        if st.button("Cancel"):
-            st.session_state.processing = False
-            st.warning("Cancelling operation...")
 
     if not st.session_state.processing and st.session_state.results:
         df = pd.DataFrame(st.session_state.results)

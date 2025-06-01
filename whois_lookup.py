@@ -287,6 +287,9 @@ def initialize_session_state():
     if "results" not in st.session_state:
         st.session_state["results"] = []
 
+    if "all_lookups_successful" not in st.session_state:
+        st.session_state.all_lookups_successful = False
+
 
 def configure_layout():
     """Configure the layout of the Streamlit app"""
@@ -394,13 +397,12 @@ def process_and_display_domains(valid_domains, lookup_type, timeout, rate_limit)
 
     st.session_state.processing = False
 
-    if st.session_state.results:
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="Download results as CSV",
-            data=csv,
-            file_name="domain_lookup_results.csv",
-            mime="text/csv"
+    # Determine if all lookups were successful
+    if not st.session_state.results:
+        st.session_state.all_lookups_successful = False
+    else:
+        st.session_state.all_lookups_successful = all(
+            result.get('lookup_status') == 'success' for result in st.session_state.results
         )
 
 
@@ -445,12 +447,22 @@ def main():
         column_order = ['domain', 'registrar', 'nameservers', 'creation_date', 'expiration_date', 'domain_status', 'lookup_status', 'lookup_method']
         df = df.reindex(columns=column_order)
         csv = df.to_csv(index=False)
-        st.download_button(
-            label="Download partial results as CSV",
-            data=csv,
-            file_name="partial_domain_lookup_results.csv",
-            mime="text/csv"
-        )
+
+        # Conditionally render the download button
+        if st.session_state.get('all_lookups_successful', False):
+            st.download_button(
+                label="Download results as CSV",
+                data=csv,
+                file_name="domain_lookup_results.csv",
+                mime="text/csv"
+            )
+        else:
+            st.download_button(
+                label="Download partial results as CSV",
+                data=csv,
+                file_name="partial_domain_lookup_results.csv",
+                mime="text/csv"
+            )
 
 
 if __name__ == "__main__":

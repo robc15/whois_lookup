@@ -510,7 +510,7 @@ def main():
         }
 
         /* Default Secondary buttons (e.g., Cancel Processing) -> Red */
-        /* This will also initially apply to Reset Session, then be overridden for it. */
+        /* This will also initially apply to Reset Session. */
         button[kind="secondary"] {
             background-color: #f44336 !important; /* Red */
             color: white !important;
@@ -532,46 +532,47 @@ def main():
 
         /* Reset Session button -> Transparent background, WHITE border */
         /* Targets the button in the second column of the "Process/Reset" button row */
+        /* This selector needs to be very specific to override the general red for secondary. */
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"] {
             background-color: transparent !important;
-            color: var(--text-color) !important; /* Theme-aware text color */
-            border: 1px solid white !important;   /* Explicitly white border */
+            color: var(--text-color) !important;
+            border: 1px solid white !important;
         }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:hover {
-            background-color: rgba(255, 255, 255, 0.1) !important; /* Subtle white hover for dark themes, or var(--secondary-background-color) */
+            background-color: rgba(255, 255, 255, 0.1) !important;
             color: var(--text-color) !important;
             border: 1px solid white !important;
         }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:active {
-            background-color: rgba(255, 255, 255, 0.2) !important; /* Subtle white active for dark themes, or var(--background-color) */
+            background-color: rgba(255, 255, 255, 0.2) !important;
             color: var(--text-color) !important;
             border: 1px solid white !important;
         }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:focus {
-            border: 1px solid white !important; /* Ensure border remains white */
-            box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.3) !important; /* White-ish focus glow */
+            border: 1px solid white !important;
+            box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.3) !important;
         }
 
 
         /* File Uploader "Browse files" button -> Transparent background, WHITE border */
         div[data-testid="stFileUploader"] section button {
             background-color: transparent !important;
-            color: var(--text-color) !important; /* Theme-aware text color */
-            border: 1px solid white !important;   /* Explicitly white border */
+            color: var(--text-color) !important;
+            border: 1px solid white !important;
         }
         div[data-testid="stFileUploader"] section button:hover {
-            background-color: rgba(255, 255, 255, 0.1) !important; /* Subtle white hover */
+            background-color: rgba(255, 255, 255, 0.1) !important;
             color: var(--text-color) !important;
             border: 1px solid white !important;
         }
         div[data-testid="stFileUploader"] section button:active {
-            background-color: rgba(255, 255, 255, 0.2) !important; /* Subtle white active */
+            background-color: rgba(255, 255, 255, 0.2) !important;
             color: var(--text-color) !important;
             border: 1px solid white !important;
         }
         div[data-testid="stFileUploader"] section button:focus {
-            border: 1px solid white !important; /* Ensure border remains white */
-            box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.3) !important; /* White-ish focus glow */
+            border: 1px solid white !important;
+            box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.3) !important;
         }
     </style>
     """

@@ -495,7 +495,7 @@ def main():
         button[kind="primary"] {
             background-color: #4CAF50 !important; /* Green */
             color: white !important;
-            border: none !important; /* Remove default border */
+            border: none !important;
         }
         button[kind="primary"]:hover {
             background-color: #45a049 !important;
@@ -505,7 +505,7 @@ def main():
             background-color: #3e8e41 !important;
             color: white !important;
         }
-        button[kind="primary"]:focus { /* Keep Streamlit's focus style or customize */
+        button[kind="primary"]:focus {
             box-shadow: 0 0 0 0.2rem rgba(76, 175, 80, 0.5) !important;
         }
 
@@ -514,7 +514,7 @@ def main():
         button[kind="secondary"] {
             background-color: #f44336 !important; /* Red */
             color: white !important;
-            border: none !important; /* Remove default border */
+            border: none !important;
         }
         button[kind="secondary"]:hover {
             background-color: #e53935 !important;
@@ -524,57 +524,57 @@ def main():
             background-color: #d32f2f !important;
             color: white !important;
         }
-        button[kind="secondary"]:focus { /* Keep Streamlit's focus style or customize */
+        button[kind="secondary"]:focus {
              box-shadow: 0 0 0 0.2rem rgba(244, 67, 54, 0.5) !important;
         }
 
-        /* === Specific Button Overrides for Transparent Background === */
+        /* === Specific Button Overrides for Transparent Background & White Border === */
 
-        /* Reset Session button -> Transparent background with theme-aware text/border */
+        /* Reset Session button -> Transparent background, WHITE border */
         /* Targets the button in the second column of the "Process/Reset" button row */
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"] {
             background-color: transparent !important;
-            color: var(--text-color) !important;
-            border: 1px solid var(--text-color) !important;
+            color: var(--text-color) !important; /* Theme-aware text color */
+            border: 1px solid white !important;   /* Explicitly white border */
         }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:hover {
-            background-color: var(--secondary-background-color) !important;
+            background-color: rgba(255, 255, 255, 0.1) !important; /* Subtle white hover for dark themes, or var(--secondary-background-color) */
             color: var(--text-color) !important;
-            border: 1px solid var(--text-color) !important;
+            border: 1px solid white !important;
         }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:active {
-            background-color: var(--background-color) !important; /* Use a slightly different subtle background for active state */
+            background-color: rgba(255, 255, 255, 0.2) !important; /* Subtle white active for dark themes, or var(--background-color) */
             color: var(--text-color) !important;
-            border: 1px solid var(--text-color) !important;
+            border: 1px solid white !important;
         }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:focus {
-            box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.1) !important; /* Neutral focus for transparent button */
+            border: 1px solid white !important; /* Ensure border remains white */
+            box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.3) !important; /* White-ish focus glow */
         }
 
 
-        /* File Uploader "Browse files" button -> Transparent background with theme-aware text/border */
-        div[data-testid="stFileUploader"] section button { /* Be more specific if 'section' is always there */
+        /* File Uploader "Browse files" button -> Transparent background, WHITE border */
+        div[data-testid="stFileUploader"] section button {
             background-color: transparent !important;
-            color: var(--text-color) !important;
-            border: 1px solid var(--text-color) !important;
-            /* padding: 0.25em 0.75em !important; */ /* Uncomment and adjust if default padding looks off */
+            color: var(--text-color) !important; /* Theme-aware text color */
+            border: 1px solid white !important;   /* Explicitly white border */
         }
         div[data-testid="stFileUploader"] section button:hover {
-            background-color: var(--secondary-background-color) !important;
+            background-color: rgba(255, 255, 255, 0.1) !important; /* Subtle white hover */
             color: var(--text-color) !important;
-            border: 1px solid var(--text-color) !important;
+            border: 1px solid white !important;
         }
         div[data-testid="stFileUploader"] section button:active {
-            background-color: var(--background-color) !important;
+            background-color: rgba(255, 255, 255, 0.2) !important; /* Subtle white active */
             color: var(--text-color) !important;
-            border: 1px solid var(--text-color) !important;
+            border: 1px solid white !important;
         }
         div[data-testid="stFileUploader"] section button:focus {
-            box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.1) !important; /* Neutral focus for transparent button */
+            border: 1px solid white !important; /* Ensure border remains white */
+            box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.3) !important; /* White-ish focus glow */
         }
     </style>
     """
-
     st.markdown(button_css, unsafe_allow_html=True)
 
     timeout, rate_limit, lookup_type = add_configuration_options()

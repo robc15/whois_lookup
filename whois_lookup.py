@@ -9,7 +9,6 @@ import socket
 import time
 from typing import List
 from urllib.parse import urlparse
-
 import pandas as pd
 import requests
 from ratelimit import limits, sleep_and_retry
@@ -487,6 +486,52 @@ def main():
     initialize_session_state()
     configure_layout()
 
+    # Inject custom CSS for button colors
+    button_css = """
+    <style>
+        /* Green for primary buttons (Process Domains, Reset Session) */
+        button[kind="primary"] {
+            background-color: #4CAF50 !important; /* Green */
+            color: white !important;
+        }
+        button[kind="primary"]:hover {
+            background-color: #45a049 !important; /* Darker Green */
+            color: white !important;
+        }
+        button[kind="primary"]:active {
+            background-color: #3e8e41 !important; /* Even Darker Green */
+            color: white !important;
+        }
+        /* Optional: custom focus style for primary buttons */
+        /*
+        button[kind="primary"]:focus {
+            box-shadow: 0 0 0 0.2rem rgba(76, 175, 80, 0.5) !important;
+        }
+        */
+
+        /* Red for secondary buttons (Cancel Processing) */
+        button[kind="secondary"] {
+            background-color: #f44336 !important; /* Red */
+            color: white !important;
+        }
+        button[kind="secondary"]:hover {
+            background-color: #e53935 !important; /* Darker Red */
+            color: white !important;
+        }
+        button[kind="secondary"]:active {
+            background-color: #d32f2f !important; /* Even Darker Red */
+            color: white !important;
+        }
+        /* Optional: custom focus style for secondary buttons */
+        /*
+        button[kind="secondary"]:focus {
+            box-shadow: 0 0 0 0.2rem rgba(244, 67, 54, 0.5) !important;
+        }
+        */
+    </style>
+    """
+    st.markdown(button_css, unsafe_allow_html=True)
+
     timeout, rate_limit, lookup_type = add_configuration_options()
 
     # input_col is where most inputs go.
@@ -540,12 +585,12 @@ def main():
 
         with b_col2:
             if st.button("Reset Session",
+                         type="primary",  # <--- Add this
                          use_container_width=True,
                          on_click=reset_session_state_callback):  # Callback handles key change
                 st.success("Inputs and results cleared. Ready for new lookup. 👍")
                 # Rerun to apply the new key to the uploader and clear other inputs
                 st.rerun()
-
     # --- Domain Processing Logic ---
 
     # If user requested cancel while processing was supposed to be active, ensure it's turned off.

@@ -489,47 +489,92 @@ def main():
     # Inject custom CSS for button colors
     button_css = """
     <style>
-        /* Green for primary buttons (Process Domains, Reset Session) */
+        /* === General Button Kind Styling === */
+
+        /* Primary buttons (e.g., Process Domains) -> Green */
         button[kind="primary"] {
             background-color: #4CAF50 !important; /* Green */
             color: white !important;
+            border: none !important; /* Remove default border */
         }
         button[kind="primary"]:hover {
-            background-color: #45a049 !important; /* Darker Green */
+            background-color: #45a049 !important;
             color: white !important;
         }
         button[kind="primary"]:active {
-            background-color: #3e8e41 !important; /* Even Darker Green */
+            background-color: #3e8e41 !important;
             color: white !important;
         }
-        /* Optional: custom focus style for primary buttons */
-        /*
-        button[kind="primary"]:focus {
+        button[kind="primary"]:focus { /* Keep Streamlit's focus style or customize */
             box-shadow: 0 0 0 0.2rem rgba(76, 175, 80, 0.5) !important;
         }
-        */
 
-        /* Red for secondary buttons (Cancel Processing) */
+        /* Default Secondary buttons (e.g., Cancel Processing) -> Red */
+        /* This will also initially apply to Reset Session, then be overridden for it. */
         button[kind="secondary"] {
             background-color: #f44336 !important; /* Red */
             color: white !important;
+            border: none !important; /* Remove default border */
         }
         button[kind="secondary"]:hover {
-            background-color: #e53935 !important; /* Darker Red */
+            background-color: #e53935 !important;
             color: white !important;
         }
         button[kind="secondary"]:active {
-            background-color: #d32f2f !important; /* Even Darker Red */
+            background-color: #d32f2f !important;
             color: white !important;
         }
-        /* Optional: custom focus style for secondary buttons */
-        /*
-        button[kind="secondary"]:focus {
-            box-shadow: 0 0 0 0.2rem rgba(244, 67, 54, 0.5) !important;
+        button[kind="secondary"]:focus { /* Keep Streamlit's focus style or customize */
+             box-shadow: 0 0 0 0.2rem rgba(244, 67, 54, 0.5) !important;
         }
-        */
+
+        /* === Specific Button Overrides for Transparent Background === */
+
+        /* Reset Session button -> Transparent background with theme-aware text/border */
+        /* Targets the button in the second column of the "Process/Reset" button row */
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"] {
+            background-color: transparent !important;
+            color: var(--text-color) !important;
+            border: 1px solid var(--text-color) !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:hover {
+            background-color: var(--secondary-background-color) !important;
+            color: var(--text-color) !important;
+            border: 1px solid var(--text-color) !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:active {
+            background-color: var(--background-color) !important; /* Use a slightly different subtle background for active state */
+            color: var(--text-color) !important;
+            border: 1px solid var(--text-color) !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) div[data-testid="stButton"] button[kind="secondary"]:focus {
+            box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.1) !important; /* Neutral focus for transparent button */
+        }
+
+
+        /* File Uploader "Browse files" button -> Transparent background with theme-aware text/border */
+        div[data-testid="stFileUploader"] section button { /* Be more specific if 'section' is always there */
+            background-color: transparent !important;
+            color: var(--text-color) !important;
+            border: 1px solid var(--text-color) !important;
+            /* padding: 0.25em 0.75em !important; */ /* Uncomment and adjust if default padding looks off */
+        }
+        div[data-testid="stFileUploader"] section button:hover {
+            background-color: var(--secondary-background-color) !important;
+            color: var(--text-color) !important;
+            border: 1px solid var(--text-color) !important;
+        }
+        div[data-testid="stFileUploader"] section button:active {
+            background-color: var(--background-color) !important;
+            color: var(--text-color) !important;
+            border: 1px solid var(--text-color) !important;
+        }
+        div[data-testid="stFileUploader"] section button:focus {
+            box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.1) !important; /* Neutral focus for transparent button */
+        }
     </style>
     """
+
     st.markdown(button_css, unsafe_allow_html=True)
 
     timeout, rate_limit, lookup_type = add_configuration_options()
@@ -584,13 +629,12 @@ def main():
                 st.rerun()  # Rerun to show cancel button (if any outside) and then start processing
 
         with b_col2:
-            if st.button("Reset Session",
-                         type="primary",  # <--- Add this
+            if st.button("Reset Session",  # <--- REMOVE type="primary"
                          use_container_width=True,
-                         on_click=reset_session_state_callback):  # Callback handles key change
+                         on_click=reset_session_state_callback):
                 st.success("Inputs and results cleared. Ready for new lookup. 👍")
-                # Rerun to apply the new key to the uploader and clear other inputs
                 st.rerun()
+
     # --- Domain Processing Logic ---
 
     # If user requested cancel while processing was supposed to be active, ensure it's turned off.

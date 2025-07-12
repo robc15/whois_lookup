@@ -230,7 +230,7 @@ def safe_whois_lookup(domain: str) -> dict:
                         # Check for common "not found" patterns in the raw text
                         text_lower = result.text.lower()
                         if any(pattern in text_lower for pattern in [
-                            'domain not found', 'no match', 'not found', 
+                            'domain not found', 'no match', 'not found',
                             'no entries found', 'object does not exist',
                             'domain status: no object found',
                             'the queried object does not exist'
@@ -437,14 +437,14 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
             if not hasattr(uploaded_file_obj, 'read') or not hasattr(uploaded_file_obj, 'seek'):
                 st.error("Invalid file object - please re-upload the CSV file.")
                 return [], []
-            
+
             # Check if file is readable and has content
             try:
                 current_pos = uploaded_file_obj.tell()
                 uploaded_file_obj.seek(0, 2)  # Seek to end
                 file_size = uploaded_file_obj.tell()
                 uploaded_file_obj.seek(current_pos)  # Return to original position
-                
+
                 if file_size == 0:
                     st.error("Uploaded CSV file is empty.")
                     return [], []
@@ -452,7 +452,7 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
                 st.error("Cannot access uploaded file - please re-upload the CSV file.")
                 logger.error(f"File access error: {e}")
                 return [], []
-            
+
             # Store current position and reset to beginning
             try:
                 uploaded_file_obj.seek(0)
@@ -745,9 +745,11 @@ def main():
             # If a file is newly uploaded or present in the widget, store it.
             # Only update if it's a different file or if we don't have one stored
             current_file = st.session_state.get("uploaded_csv_file")
-            if (current_file is None or 
-                getattr(current_file, 'name', '') != uploaded_file_widget_value.name or
-                getattr(current_file, 'size', 0) != uploaded_file_widget_value.size):
+            if (
+                current_file is None
+                or getattr(current_file, 'name', '') != uploaded_file_widget_value.name
+                or getattr(current_file, 'size', 0) != uploaded_file_widget_value.size
+            ):
                 st.session_state.uploaded_csv_file = uploaded_file_widget_value
         else:
             # If the widget is empty (e.g., after key change or user clears it),

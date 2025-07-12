@@ -60,7 +60,7 @@ def with_timeout(timeout_seconds):
             result = [None]  # Use list to store result (mutable)
             exception = [None]  # Store any exception
             completed = [False]  # Track completion
-            
+
             def target():
                 try:
                     result[0] = func(*args, **kwargs)
@@ -68,21 +68,21 @@ def with_timeout(timeout_seconds):
                 except Exception as e:
                     exception[0] = e
                     completed[0] = True
-            
+
             thread = threading.Thread(target=target)
             thread.daemon = True
             thread.start()
-            
+
             # Give a bit more time buffer and check completion status
             thread.join(timeout_seconds + 1.0)  # Add 1 second buffer
-            
+
             if thread.is_alive() or not completed[0]:
                 # Thread is still running or didn't complete, timeout occurred
                 return None
-            
+
             if exception[0]:
                 raise exception[0]
-            
+
             return result[0]
         return wrapper
     return decorator
@@ -125,7 +125,7 @@ def _rdap_lookup_internal(domain: str) -> dict:
     elif response.status_code != 200:
         msg = f'RDAP lookup failed with status {response.status_code}'
         return _create_error_result(domain, msg, 'RDAP')
-    
+
     data = response.json()
 
     # Extract relevant information
@@ -186,11 +186,11 @@ def safe_rdap_lookup(domain: str) -> dict:
         # Use timeout decorator to ensure hard timeout
         timeout_func = with_timeout(WHOIS_TIMEOUT)(_rdap_lookup_internal)
         result = timeout_func(domain)
-        
+
         if result is None:  # Timeout occurred
             logger.error(f"Hard timeout error for {domain} (RDAP)")
             return _create_error_result(domain, 'Operation timed out', 'RDAP')
-        
+
         return result
     except requests.Timeout:
         logger.error(f"Timeout error for {domain} (RDAP)")
@@ -205,8 +205,6 @@ def safe_rdap_lookup(domain: str) -> dict:
         return _create_error_result(domain, str(e), 'RDAP')
 
 
-
-
 @sleep_and_retry
 @limits(calls=CALLS_PER_MINUTE, period=PERIOD)
 def safe_whois_lookup(domain: str) -> dict:
@@ -219,12 +217,12 @@ def safe_whois_lookup(domain: str) -> dict:
             # Set a longer socket timeout to allow for slower WHOIS servers
             original_timeout = socket.getdefaulttimeout()
             socket.setdefaulttimeout(WHOIS_TIMEOUT * 2)  # Double the timeout
-            
+
             try:
                 result = whois.whois(domain)
                 if result is None:
                     return _create_error_result(domain, 'No WHOIS server found for this TLD', 'WHOIS')
-                
+
                 # Check if we have a valid domain_name field
                 if not hasattr(result, 'domain_name') or not result.domain_name:
                     # Check if we have any useful data in the result
@@ -238,7 +236,7 @@ def safe_whois_lookup(domain: str) -> dict:
                             'the queried object does not exist'
                         ]):
                             return _create_error_result(domain, 'Domain not found in WHOIS database', 'WHOIS')
-                        
+
                         # If it's not a "not found" error, it might be unparseable data
                         return _create_error_result(domain, 'Domain data not parseable (TLD may not support detailed WHOIS)', 'WHOIS')
                     else:
@@ -278,7 +276,7 @@ def safe_whois_lookup(domain: str) -> dict:
                 }
             finally:
                 socket.setdefaulttimeout(original_timeout)
-                
+
         except socket.timeout:
             if attempt == 0:
                 logger.warning(f"First timeout for {domain}, retrying...")
@@ -300,7 +298,7 @@ def safe_whois_lookup(domain: str) -> dict:
             else:
                 status_msg = str(e)
             return _create_error_result(domain, status_msg, 'WHOIS')
-    
+
     # Should not reach here
     return _create_error_result(domain, 'Max retries exceeded', 'WHOIS')
 
@@ -379,6 +377,11 @@ def initialize_session_state():
     # Add a key for the uploader that we can change
     if "uploader_key_counter" not in st.session_state:
         st.session_state.uploader_key_counter = 0
+    # Track CSV processing to prevent restarts
+    if "csv_processed_domains" not in st.session_state:
+        st.session_state.csv_processed_domains = []
+    if "processing_start_index" not in st.session_state:
+        st.session_state.processing_start_index = 0
     # uploaded_csv_file will store the actual UploadedFile object
     # if "uploaded_csv_file" not in st.session_state:
     #     st.session_state.uploaded_csv_file = None # Not strictly needed to init here
@@ -430,10 +433,37 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
         )
     if uploaded_file_obj is not None:
         try:
-            # Crucial: Reset file pointer to the beginning before reading
-            uploaded_file_obj.seek(0)
-            df = pd.read_csv(uploaded_file_obj)
+            # Validate file object before processing
+            if not hasattr(uploaded_file_obj, 'read') or not hasattr(uploaded_file_obj, 'seek'):
+                st.error("Invalid file object - please re-upload the CSV file.")
+                return [], []
             
+            # Check if file is readable and has content
+            try:
+                current_pos = uploaded_file_obj.tell()
+                uploaded_file_obj.seek(0, 2)  # Seek to end
+                file_size = uploaded_file_obj.tell()
+                uploaded_file_obj.seek(current_pos)  # Return to original position
+                
+                if file_size == 0:
+                    st.error("Uploaded CSV file is empty.")
+                    return [], []
+            except (OSError, IOError) as e:
+                st.error("Cannot access uploaded file - please re-upload the CSV file.")
+                logger.error(f"File access error: {e}")
+                return [], []
+            
+            # Store current position and reset to beginning
+            try:
+                uploaded_file_obj.seek(0)
+                df = pd.read_csv(uploaded_file_obj)
+            except pd.errors.EmptyDataError:
+                st.error("CSV file is empty or contains no data.")
+                return [], []
+            except pd.errors.ParserError as e:
+                st.error(f"Error parsing CSV file: {e}")
+                return [], []
+
             # Check if there's a 'domain' column
             if 'domain' in df.columns:
                 raw_domains.extend(df['domain'].dropna().str.strip().tolist())
@@ -444,17 +474,10 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
                 raw_domains.extend(df[first_column].dropna().str.strip().tolist())
             else:
                 st.error("Uploaded CSV file must contain a 'domain' column or be a single-column file with domains.")
-                # Reset file pointer before returning on error
-                uploaded_file_obj.seek(0)
                 return [], []  # Return empty lists on error
         except Exception as e:
             st.error(f"Error reading CSV file: {e}")
             logger.error(f"Error reading CSV. File object type: {type(uploaded_file_obj)}, Name: {getattr(uploaded_file_obj, 'name', 'N/A')}")
-            # Reset file pointer before returning on error
-            try:
-                uploaded_file_obj.seek(0)
-            except:
-                pass  # In case seek fails, don't raise another exception
             return [], []
 
     valid_domains = []
@@ -581,6 +604,8 @@ def reset_session_state_callback():
     st.session_state.domains_text = ""
     st.session_state.process_button_clicked = False
     st.session_state.user_requested_cancel = False
+    st.session_state.csv_processed_domains = []
+    st.session_state.processing_start_index = 0
 
     if "uploaded_csv_file" in st.session_state:
         del st.session_state.uploaded_csv_file
@@ -718,7 +743,12 @@ def main():
         # Manage the actual uploaded file object in a separate session state variable
         if uploaded_file_widget_value is not None:
             # If a file is newly uploaded or present in the widget, store it.
-            st.session_state.uploaded_csv_file = uploaded_file_widget_value
+            # Only update if it's a different file or if we don't have one stored
+            current_file = st.session_state.get("uploaded_csv_file")
+            if (current_file is None or 
+                getattr(current_file, 'name', '') != uploaded_file_widget_value.name or
+                getattr(current_file, 'size', 0) != uploaded_file_widget_value.size):
+                st.session_state.uploaded_csv_file = uploaded_file_widget_value
         else:
             # If the widget is empty (e.g., after key change or user clears it),
             # ensure our stored version is also removed.
@@ -786,13 +816,11 @@ def main():
         if st.session_state.get("user_requested_cancel", False):
             st.session_state.processing_active = False  # Ensure it's off
             st.warning("Operation cancelled by user before processing started.")
-            st.rerun()  # Rerun to update UI
         elif not valid_domains:
             if st.session_state.get("process_button_clicked"):  # Only show error if process was actually attempted
                 st.error("No valid domains found to process!")
             st.session_state.processing_active = False
             st.session_state.process_button_clicked = False  # Reset, as no processing happened
-            st.rerun()
         else:  # We have valid domains and we were not cancelled before starting this block
             info_msg = (
                 f"Found {len(valid_domains)} valid domains. "
@@ -809,7 +837,7 @@ def main():
             # set processing_active to False.
             st.session_state.processing_active = False
             st.session_state.process_button_clicked = False  # Reset after processing attempt
-            st.rerun()  # Rerun to update UI (e.g., remove progress bar, cancel button from view)
+            # Remove st.rerun() to prevent restart during processing
 
     # --- Display Results and Download Button ---
     # This section is shown if there are results, regardless of processing_active.

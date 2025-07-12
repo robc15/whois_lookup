@@ -6,6 +6,7 @@ lookup parameters.
 import logging
 import re
 import socket
+import threading
 import time
 from typing import List
 from urllib.parse import urlparse
@@ -47,6 +48,46 @@ OUTPUT_COLUMN_ORDER = [
 # Two blank lines before function definition (PEP 8)
 
 
+class TimeoutError(Exception):
+    """Custom timeout exception"""
+    pass
+
+
+def with_timeout(timeout_seconds):
+    """Thread-safe timeout decorator using threading with improved timing"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            result = [None]  # Use list to store result (mutable)
+            exception = [None]  # Store any exception
+            completed = [False]  # Track completion
+            
+            def target():
+                try:
+                    result[0] = func(*args, **kwargs)
+                    completed[0] = True
+                except Exception as e:
+                    exception[0] = e
+                    completed[0] = True
+            
+            thread = threading.Thread(target=target)
+            thread.daemon = True
+            thread.start()
+            
+            # Give a bit more time buffer and check completion status
+            thread.join(timeout_seconds + 1.0)  # Add 1 second buffer
+            
+            if thread.is_alive() or not completed[0]:
+                # Thread is still running or didn't complete, timeout occurred
+                return None
+            
+            if exception[0]:
+                raise exception[0]
+            
+            return result[0]
+        return wrapper
+    return decorator
+
+
 def clean_date(date_value):
     """Helper function to clean date values"""
     if isinstance(date_value, list):
@@ -73,141 +114,195 @@ def _create_error_result(domain: str, message: str, method: str) -> dict:
     }
 
 
-def safe_rdap_lookup(domain: str) -> dict:
-    """
-    Perform RDAP lookup for a single domain
-    """
-    try:
-        # First, try to get the RDAP URL for the domain
-        bootstrap_url = f"https://rdap.org/domain/{domain}"
-        response = requests.get(
-            bootstrap_url, timeout=WHOIS_TIMEOUT
-        )  # Uses global WHOIS_TIMEOUT
+def _rdap_lookup_internal(domain: str) -> dict:
+    """Internal RDAP lookup without timeout handling"""
+    # First, try to get the RDAP URL for the domain
+    bootstrap_url = f"https://rdap.org/domain/{domain}"
+    response = requests.get(bootstrap_url, timeout=WHOIS_TIMEOUT)
 
-        if response.status_code != 200:
-            msg = f'RDAP lookup failed with status {response.status_code}'
-            return _create_error_result(domain, msg, 'RDAP')
-        data = response.json()
+    if response.status_code == 404:
+        return _create_error_result(domain, 'No RDAP server found for this TLD', 'RDAP')
+    elif response.status_code != 200:
+        msg = f'RDAP lookup failed with status {response.status_code}'
+        return _create_error_result(domain, msg, 'RDAP')
+    
+    data = response.json()
 
-        # Extract relevant information
-        registrar = None
-        if 'entities' in data:
-            for entity in data['entities']:
-                if 'roles' in entity and 'registrar' in entity['roles']:
-                    if 'vcardArray' in entity:
-                        vcard = entity['vcardArray']
-                        if len(vcard) > 1 and isinstance(vcard[1],
-                                                         list):
-                            for item in vcard[1]:
-                                if (isinstance(item, list) and
-                                        len(item) > 3 and item[0] == 'fn'):
-                                    registrar = item[3]
-                                    break
-                    if registrar:
-                        break
-
-        creation_date, expiration_date = None, None
-        if 'events' in data:
-            for event in data['events']:
-                if event.get('eventAction') == 'registration':
-                    creation_date = event.get('eventDate')
-                elif event.get('eventAction') == 'expiration':
-                    expiration_date = event.get('eventDate')
-                if creation_date and expiration_date:
+    # Extract relevant information
+    registrar = None
+    if 'entities' in data:
+        for entity in data['entities']:
+            if 'roles' in entity and 'registrar' in entity['roles']:
+                if 'vcardArray' in entity:
+                    vcard = entity['vcardArray']
+                    if len(vcard) > 1 and isinstance(vcard[1], list):
+                        for item in vcard[1]:
+                            if (isinstance(item, list) and
+                                    len(item) > 3 and item[0] == 'fn'):
+                                registrar = item[3]
+                                break
+                if registrar:
                     break
 
-        # Get domain status
-        status = data.get('status', [])
-        domain_status = ', '.join(status) if status else None
+    creation_date, expiration_date = None, None
+    if 'events' in data:
+        for event in data['events']:
+            if event.get('eventAction') == 'registration':
+                creation_date = event.get('eventDate')
+            elif event.get('eventAction') == 'expiration':
+                expiration_date = event.get('eventDate')
+            if creation_date and expiration_date:
+                break
 
-        # Get nameservers
-        nameservers = []
-        if 'nameservers' in data:
-            for ns in data['nameservers']:
-                if 'ldhName' in ns:
-                    nameservers.append(ns['ldhName'])
-        nameservers = ', '.join(sorted(nameservers)) if nameservers else None
+    # Get domain status
+    status = data.get('status', [])
+    domain_status = ', '.join(status) if status else None
 
-        return {
-            'domain': domain,
-            'registrar': registrar,
-            'creation_date': clean_date(creation_date),
-            'expiration_date': clean_date(expiration_date),
-            'domain_status': domain_status,
-            'nameservers': nameservers,
-            'lookup_status': 'success',
-            'lookup_method': 'RDAP'
-        }
+    # Get nameservers
+    nameservers = []
+    if 'nameservers' in data:
+        for ns in data['nameservers']:
+            if 'ldhName' in ns:
+                nameservers.append(ns['ldhName'])
+    nameservers = ', '.join(sorted(nameservers)) if nameservers else None
+
+    return {
+        'domain': domain,
+        'registrar': registrar,
+        'creation_date': clean_date(creation_date),
+        'expiration_date': clean_date(expiration_date),
+        'domain_status': domain_status,
+        'nameservers': nameservers,
+        'lookup_status': 'success',
+        'lookup_method': 'RDAP'
+    }
+
+
+def safe_rdap_lookup(domain: str) -> dict:
+    """
+    Perform RDAP lookup for a single domain with timeout protection
+    """
+    try:
+        # Use timeout decorator to ensure hard timeout
+        timeout_func = with_timeout(WHOIS_TIMEOUT)(_rdap_lookup_internal)
+        result = timeout_func(domain)
+        
+        if result is None:  # Timeout occurred
+            logger.error(f"Hard timeout error for {domain} (RDAP)")
+            return _create_error_result(domain, 'Operation timed out', 'RDAP')
+        
+        return result
     except requests.Timeout:
         logger.error(f"Timeout error for {domain} (RDAP)")
         return _create_error_result(domain, 'Connection timed out', 'RDAP')
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error looking up {domain} via RDAP: {str(e)}")
+        if "404" in str(e) or "Not Found" in str(e):
+            return _create_error_result(domain, 'No RDAP server found for this TLD', 'RDAP')
+        return _create_error_result(domain, f'Network error: {str(e)}', 'RDAP')
     except Exception as e:
         logger.error(f"Error looking up {domain} via RDAP: {str(e)}")
         return _create_error_result(domain, str(e), 'RDAP')
+
+
 
 
 @sleep_and_retry
 @limits(calls=CALLS_PER_MINUTE, period=PERIOD)
 def safe_whois_lookup(domain: str) -> dict:
     """
-    Perform rate-limited WHOIS lookup for a single domain
+    Perform rate-limited WHOIS lookup for a single domain with improved reliability
     """
-    original_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(WHOIS_TIMEOUT)  # Uses global WHOIS_TIMEOUT
+    # Try the lookup multiple times with different timeout strategies
+    for attempt in range(2):
+        try:
+            # Set a longer socket timeout to allow for slower WHOIS servers
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(WHOIS_TIMEOUT * 2)  # Double the timeout
+            
+            try:
+                result = whois.whois(domain)
+                if result is None:
+                    return _create_error_result(domain, 'No WHOIS server found for this TLD', 'WHOIS')
+                
+                # Check if we have a valid domain_name field
+                if not hasattr(result, 'domain_name') or not result.domain_name:
+                    # Check if we have any useful data in the result
+                    if hasattr(result, 'text') and result.text:
+                        # Check for common "not found" patterns in the raw text
+                        text_lower = result.text.lower()
+                        if any(pattern in text_lower for pattern in [
+                            'domain not found', 'no match', 'not found', 
+                            'no entries found', 'object does not exist',
+                            'domain status: no object found',
+                            'the queried object does not exist'
+                        ]):
+                            return _create_error_result(domain, 'Domain not found in WHOIS database', 'WHOIS')
+                        
+                        # If it's not a "not found" error, it might be unparseable data
+                        return _create_error_result(domain, 'Domain data not parseable (TLD may not support detailed WHOIS)', 'WHOIS')
+                    else:
+                        return _create_error_result(domain, 'No domain data found', 'WHOIS')
 
-    try:
-        result = whois.whois(domain)
-        if result is None or not result.domain_name:  # Added check for empty result
-            return _create_error_result(domain, 'No data found', 'WHOIS')
+                creation_date = clean_date(
+                    result.creation_date if hasattr(result, 'creation_date') else None
+                )
+                expiration_date = clean_date(
+                    result.expiration_date if hasattr(result, 'expiration_date') else None
+                )
+                registrar = result.registrar if hasattr(result, 'registrar') else None
+                if isinstance(registrar, list):
+                    registrar = registrar[0] if registrar else None
 
-        creation_date = clean_date(
-            result.creation_date if hasattr(result, 'creation_date') else None
-        )
-        expiration_date = clean_date(
-            result.expiration_date if hasattr(result, 'expiration_date') else None
-        )
-        registrar = result.registrar if hasattr(result, 'registrar') else None
-        if isinstance(registrar, list):
-            registrar = registrar[0] if registrar else None
+                domain_status = result.status if hasattr(result, 'status') else None
+                if isinstance(domain_status, list):
+                    domain_status = ', '.join(s.lower() for s in domain_status if s)
+                elif isinstance(domain_status, str):
+                    domain_status = domain_status.lower()
 
-        domain_status = result.status if hasattr(result, 'status') else None
-        if isinstance(domain_status, list):
-            # Normalize and join
-            domain_status = ', '.join(s.lower() for s in domain_status if s)
-        elif isinstance(domain_status, str):
-            domain_status = domain_status.lower()
+                nameservers = result.name_servers if hasattr(result, 'name_servers') else None
+                if isinstance(nameservers, list):
+                    nameservers = ', '.join(sorted(ns.lower() for ns in nameservers if ns))
+                elif isinstance(nameservers, str):
+                    nameservers = nameservers.lower()
 
-        nameservers = result.name_servers if hasattr(result,
-                                                     'name_servers') else None
-        if isinstance(nameservers, list):
-            # Normalize and join
-            nameservers = ', '.join(sorted(ns.lower() for ns in nameservers if ns))
-        elif isinstance(nameservers, str):
-            nameservers = nameservers.lower()
-
-        return {
-            'domain': domain,
-            'registrar': registrar,
-            'creation_date': creation_date,
-            'expiration_date': expiration_date,
-            'domain_status': domain_status,
-            'nameservers': nameservers,
-            'lookup_status': 'success',
-            'lookup_method': 'WHOIS'
-        }
-    except socket.timeout:
-        logger.error(f"Timeout error for {domain} (WHOIS)")
-        return _create_error_result(domain, 'Connection timed out', 'WHOIS')
-    except Exception as e:
-        logger.error(f"Error looking up {domain} via WHOIS: {str(e)}")
-        # Check for common python-whois error messages
-        if "No match for" in str(e) or "No WHOIS server known for" in str(e):
-            status_msg = 'Domain not found or no WHOIS server'
-        else:
-            status_msg = str(e)
-        return _create_error_result(domain, status_msg, 'WHOIS')
-    finally:
-        socket.setdefaulttimeout(original_timeout)
+                return {
+                    'domain': domain,
+                    'registrar': registrar,
+                    'creation_date': creation_date,
+                    'expiration_date': expiration_date,
+                    'domain_status': domain_status,
+                    'nameservers': nameservers,
+                    'lookup_status': 'success',
+                    'lookup_method': 'WHOIS'
+                }
+            finally:
+                socket.setdefaulttimeout(original_timeout)
+                
+        except socket.timeout:
+            if attempt == 0:
+                logger.warning(f"First timeout for {domain}, retrying...")
+                continue
+            logger.error(f"Timeout error for {domain} (WHOIS) after retry")
+            return _create_error_result(domain, 'Connection timed out', 'WHOIS')
+        except Exception as e:
+            if attempt == 0 and "timeout" in str(e).lower():
+                logger.warning(f"First attempt failed for {domain} with timeout-like error, retrying...")
+                continue
+            logger.error(f"Error looking up {domain} via WHOIS: {str(e)}")
+            # Check for common python-whois error messages
+            if "No match for" in str(e):
+                status_msg = 'Domain not found in WHOIS database'
+            elif "No WHOIS server known for" in str(e):
+                status_msg = 'No WHOIS server found for this TLD'
+            elif "timeout" in str(e).lower():
+                status_msg = 'Connection timed out'
+            else:
+                status_msg = str(e)
+            return _create_error_result(domain, status_msg, 'WHOIS')
+    
+    # Should not reach here
+    return _create_error_result(domain, 'Max retries exceeded', 'WHOIS')
 
 
 def is_valid_domain(domain: str) -> tuple[bool, str]:
@@ -338,14 +433,28 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
             # Crucial: Reset file pointer to the beginning before reading
             uploaded_file_obj.seek(0)
             df = pd.read_csv(uploaded_file_obj)
+            
+            # Check if there's a 'domain' column
             if 'domain' in df.columns:
                 raw_domains.extend(df['domain'].dropna().str.strip().tolist())
+            # If no 'domain' column, check if there's only one column (headerless CSV)
+            elif len(df.columns) == 1:
+                # Assume the single column contains domains (common for headerless CSVs)
+                first_column = df.columns[0]
+                raw_domains.extend(df[first_column].dropna().str.strip().tolist())
             else:
-                st.error("Uploaded CSV file must contain a 'domain' column.")
+                st.error("Uploaded CSV file must contain a 'domain' column or be a single-column file with domains.")
+                # Reset file pointer before returning on error
+                uploaded_file_obj.seek(0)
                 return [], []  # Return empty lists on error
         except Exception as e:
             st.error(f"Error reading CSV file: {e}")
             logger.error(f"Error reading CSV. File object type: {type(uploaded_file_obj)}, Name: {getattr(uploaded_file_obj, 'name', 'N/A')}")
+            # Reset file pointer before returning on error
+            try:
+                uploaded_file_obj.seek(0)
+            except:
+                pass  # In case seek fails, don't raise another exception
             return [], []
 
     valid_domains = []
@@ -424,6 +533,8 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
         if st.session_state.results:
             df_live = pd.DataFrame(st.session_state.results)
             df_live = df_live.reindex(columns=OUTPUT_COLUMN_ORDER)
+            # Reset index to start from 1 instead of 0
+            df_live.index = df_live.index + 1
             # Use the placeholder to display/update the DataFrame
             live_results_table_placeholder.dataframe(df_live)
 
@@ -652,9 +763,9 @@ def main():
         file_to_process_from_session = st.session_state.get("uploaded_csv_file", None)
 
         if file_to_process_from_session is not None:
-            logger.info(f"Main: Attempting to process with uploaded file: {file_to_process_from_session.name}")
+            logger.debug(f"Main: Attempting to process with uploaded file: {file_to_process_from_session.name}")
         else:
-            logger.info("Main: No uploaded CSV file found in session state for processing.")
+            logger.debug("Main: No uploaded CSV file found in session state for processing.")
 
         valid_domains, invalid_domains_info = get_domains_from_input(
             current_domains_text, file_to_process_from_session
@@ -708,6 +819,8 @@ def main():
 
         df_results = pd.DataFrame(st.session_state.results)
         df_results = df_results.reindex(columns=OUTPUT_COLUMN_ORDER)  # Ensures all columns, fills missing with NA
+        # Reset index to start from 1 instead of 0
+        df_results.index = df_results.index + 1
         st.dataframe(df_results, use_container_width=True)
 
         csv_data = df_results.to_csv(index=False).encode('utf-8')

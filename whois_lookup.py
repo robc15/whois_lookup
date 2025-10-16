@@ -20,12 +20,24 @@ import whois
 # Configure logging
 class ExcludeFilter(logging.Filter):
     def filter(self, record):
-        return 'Trying WHOIS server' not in record.getMessage()
+        # Filter out verbose WHOIS server messages and Tornado websocket errors
+        message = record.getMessage()
+        return (
+            'Trying WHOIS server' not in message and
+            'WebSocketClosedError' not in message and
+            'Stream is closed' not in message
+        )
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.addFilter(ExcludeFilter())
+
+# Suppress Tornado/Streamlit WebSocket errors
+tornado_logger = logging.getLogger('tornado.websocket')
+tornado_logger.addFilter(ExcludeFilter())
+asyncio_logger = logging.getLogger('asyncio')
+asyncio_logger.addFilter(ExcludeFilter())
 
 # Rate limiting configuration
 CALLS_PER_MINUTE = 10  # Conservative rate limit
@@ -180,29 +192,63 @@ def _rdap_lookup_internal(domain: str) -> dict:
 
 def safe_rdap_lookup(domain: str) -> dict:
     """
-    Perform RDAP lookup for a single domain with timeout protection
+    Perform RDAP lookup for a single domain with timeout protection and retry logic
     """
-    try:
-        # Use timeout decorator to ensure hard timeout
-        timeout_func = with_timeout(WHOIS_TIMEOUT)(_rdap_lookup_internal)
-        result = timeout_func(domain)
+    max_retries = 3
+    base_delay = 1.0  # Start with 1 second delay
 
-        if result is None:  # Timeout occurred
-            logger.error(f"Hard timeout error for {domain} (RDAP)")
-            return _create_error_result(domain, 'Operation timed out', 'RDAP')
+    for attempt in range(max_retries):
+        try:
+            # Use timeout decorator to ensure hard timeout
+            timeout_func = with_timeout(WHOIS_TIMEOUT)(_rdap_lookup_internal)
+            result = timeout_func(domain)
 
-        return result
-    except requests.Timeout:
-        logger.error(f"Timeout error for {domain} (RDAP)")
-        return _create_error_result(domain, 'Connection timed out', 'RDAP')
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network error looking up {domain} via RDAP: {str(e)}")
-        if "404" in str(e) or "Not Found" in str(e):
-            return _create_error_result(domain, 'No RDAP server found for this TLD', 'RDAP')
-        return _create_error_result(domain, f'Network error: {str(e)}', 'RDAP')
-    except Exception as e:
-        logger.error(f"Error looking up {domain} via RDAP: {str(e)}")
-        return _create_error_result(domain, str(e), 'RDAP')
+            if result is None:  # Timeout occurred
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"Timeout for {domain} (RDAP), attempt {attempt + 1}/{max_retries}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                logger.error(f"Hard timeout error for {domain} (RDAP) after {max_retries} attempts")
+                return _create_error_result(domain, 'Operation timed out', 'RDAP')
+
+            return result
+        except requests.Timeout:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Timeout for {domain} (RDAP), attempt {attempt + 1}/{max_retries}. Retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            logger.error(f"Timeout error for {domain} (RDAP) after {max_retries} attempts")
+            return _create_error_result(domain, 'Connection timed out', 'RDAP')
+        except requests.exceptions.ConnectionError as e:
+            # Retry on connection errors (including connection reset)
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Connection error for {domain} (RDAP): {str(e)}. Attempt {attempt + 1}/{max_retries}. Retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            logger.error(f"Connection error for {domain} (RDAP) after {max_retries} attempts: {str(e)}")
+            return _create_error_result(domain, f'Connection error: {str(e)}', 'RDAP')
+        except requests.exceptions.RequestException as e:
+            # Don't retry 404s - they're permanent
+            if "404" in str(e) or "Not Found" in str(e):
+                logger.error(f"No RDAP server found for {domain}")
+                return _create_error_result(domain, 'No RDAP server found for this TLD', 'RDAP')
+            # Retry other request exceptions
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Network error for {domain} (RDAP): {str(e)}. Attempt {attempt + 1}/{max_retries}. Retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            logger.error(f"Network error looking up {domain} via RDAP after {max_retries} attempts: {str(e)}")
+            return _create_error_result(domain, f'Network error: {str(e)}', 'RDAP')
+        except Exception as e:
+            logger.error(f"Error looking up {domain} via RDAP: {str(e)}")
+            return _create_error_result(domain, str(e), 'RDAP')
+
+    # Should not reach here
+    return _create_error_result(domain, 'Max retries exceeded', 'RDAP')
 
 
 @sleep_and_retry
@@ -374,6 +420,8 @@ def initialize_session_state():
         st.session_state.domains_text = ""
     if "process_button_clicked" not in st.session_state:
         st.session_state.process_button_clicked = False
+    if "resume_processing" not in st.session_state:
+        st.session_state.resume_processing = False
     # Add a key for the uploader that we can change
     if "uploader_key_counter" not in st.session_state:
         st.session_state.uploader_key_counter = 0
@@ -498,8 +546,8 @@ def get_domains_from_input(domains_text: str, uploaded_file_obj) -> tuple[List[s
 
 
 # whois_lookup.py
-def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate_limit_config):
-    """Process and display the domains, now with an internal cancel button."""
+def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate_limit_config, resume=False):
+    """Process and display the domains, now with an internal cancel button and resume capability."""
     _current_run_completed_fully = True
 
     progress_bar = st.progress(0, text="Initializing lookup...")
@@ -526,23 +574,36 @@ def process_and_display_domains(valid_domains, lookup_type, timeout_config, rate
     global WHOIS_TIMEOUT
     WHOIS_TIMEOUT = timeout_config
 
+    # Determine start index for resume capability
+    if resume:
+        # Get domains that have already been processed
+        processed_domains = {result['domain'] for result in st.session_state.results}
+        start_index = len(processed_domains)
+        if start_index > 0:
+            status_text.info(f"Resuming from domain {start_index + 1}/{total_domains}...")
+            time.sleep(1)  # Brief pause to show resume message
+    else:
+        start_index = 0
+
     # --- Main processing loop ---
-    for idx, domain in enumerate(valid_domains, 1):
+    for idx in range(start_index, total_domains):
+        domain = valid_domains[idx]
+
         if st.session_state.get("user_requested_cancel", False):
             _current_run_completed_fully = False
             status_text.warning(
-                "Operation cancelled by user. Processing stopped."
+                f"Operation cancelled by user. Processed {idx}/{total_domains} domains. You can resume later."
             )
             cancel_button_placeholder.empty()
             break
 
-        progress_val = idx / total_domains
-        progress_text = f"Processing: {domain} ({idx}/{total_domains})"
+        progress_val = (idx + 1) / total_domains
+        progress_text = f"Processing: {domain} ({idx + 1}/{total_domains})"
         progress_bar.progress(progress_val, text=progress_text)
 
         status_msg = (f"Looking up {domain}... "
-                      f"({idx}/{total_domains} completed, "
-                      f"{total_domains - idx} remaining)")
+                      f"({idx + 1}/{total_domains} completed, "
+                      f"{total_domains - idx - 1} remaining)")
         status_text.text(status_msg)
 
         if lookup_type == "WHOIS":
@@ -606,6 +667,7 @@ def reset_session_state_callback():
     st.session_state.user_requested_cancel = False
     st.session_state.csv_processed_domains = []
     st.session_state.processing_start_index = 0
+    st.session_state.resume_processing = False
 
     if "uploaded_csv_file" in st.session_state:
         del st.session_state.uploaded_csv_file
@@ -758,26 +820,58 @@ def main():
                 del st.session_state.uploaded_csv_file
 
         # --- Buttons ---
-        b_col1, b_col2 = st.columns(2)
+        # Check if there are partial results that can be resumed
+        has_partial_results = (
+            st.session_state.results and
+            st.session_state.valid_domains and
+            len(st.session_state.results) < len(st.session_state.valid_domains) and
+            not st.session_state.get("processing_active", False)
+        )
 
-        with b_col1:
-            if st.button("Process Domains",
-                         type="primary",
-                         use_container_width=True):
-                st.session_state.results = []  # Clear previous results
-                st.session_state.valid_domains = []  # Clear previous valid domains
-                st.session_state.all_lookups_successful = False  # Reset flag
-                st.session_state.user_requested_cancel = False  # Reset cancel flag
-                st.session_state.processing_active = True  # Start processing mode
-                st.session_state.process_button_clicked = True  # Track that this button was clicked
-                st.rerun()  # Rerun to show cancel button (if any outside) and then start processing
+        if has_partial_results:
+            # Show Resume and Reset buttons when there are partial results
+            b_col1, b_col2 = st.columns(2)
 
-        with b_col2:
-            if st.button("Reset Session",  # <--- REMOVE type="primary"
-                         use_container_width=True,
-                         on_click=reset_session_state_callback):
-                st.success("Inputs and results cleared. Ready for new lookup. 👍")
-                st.rerun()
+            with b_col1:
+                remaining = len(st.session_state.valid_domains) - len(st.session_state.results)
+                if st.button(f"Resume Processing ({remaining} remaining)",
+                             type="primary",
+                             use_container_width=True):
+                    st.session_state.user_requested_cancel = False  # Reset cancel flag
+                    st.session_state.processing_active = True  # Start processing mode
+                    st.session_state.resume_processing = True  # Flag to resume
+                    st.session_state.process_button_clicked = True
+                    st.rerun()
+
+            with b_col2:
+                if st.button("Start Over",
+                             use_container_width=True,
+                             on_click=reset_session_state_callback):
+                    st.success("Inputs and results cleared. Ready for new lookup. 👍")
+                    st.rerun()
+        else:
+            # Show normal Process and Reset buttons
+            b_col1, b_col2 = st.columns(2)
+
+            with b_col1:
+                if st.button("Process Domains",
+                             type="primary",
+                             use_container_width=True):
+                    st.session_state.results = []  # Clear previous results
+                    st.session_state.valid_domains = []  # Clear previous valid domains
+                    st.session_state.all_lookups_successful = False  # Reset flag
+                    st.session_state.user_requested_cancel = False  # Reset cancel flag
+                    st.session_state.processing_active = True  # Start processing mode
+                    st.session_state.process_button_clicked = True  # Track that this button was clicked
+                    st.session_state.resume_processing = False  # Not resuming
+                    st.rerun()  # Rerun to show cancel button (if any outside) and then start processing
+
+            with b_col2:
+                if st.button("Reset Session",
+                             use_container_width=True,
+                             on_click=reset_session_state_callback):
+                    st.success("Inputs and results cleared. Ready for new lookup. 👍")
+                    st.rerun()
 
     # --- Domain Processing Logic ---
 
@@ -832,8 +926,9 @@ def main():
 
             # Call the processing function. It will display its own cancel button
             # and check st.session_state.user_requested_cancel.
+            resume_flag = st.session_state.get("resume_processing", False)
             process_and_display_domains(
-                valid_domains, lookup_type, timeout, rate_limit
+                valid_domains, lookup_type, timeout, rate_limit, resume=resume_flag
             )
             # After process_and_display_domains completes (fully or by its own cancellation),
             # set processing_active to False.
